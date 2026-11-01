@@ -227,6 +227,10 @@ def _load_lab_thresholds() -> dict:
         rows = [t for t in rules_db.get_absolute_thresholds()
                 if t.get("variant") == "safety_net" and t["metric"] not in _LIFESTYLE_M2K]
         if not rows:
+            import norm_documents
+            if not norm_documents.CTCAE_SNAPSHOT.exists():
+                _note_ctcae_absent()
+                return _FALLBACK_LAB
             raise ValueError("нет safety_net-строк в absolute_thresholds")
         out: dict = {}
         for t in rows:
@@ -273,6 +277,19 @@ _EFLM_ABSENT_MARK = "eflm_absent_noticed"   # отметка «оператор�
 
 
 def _note_eflm_absent() -> None:
+    _note_snapshot_absent(_EFLM_ABSENT_MARK, "owner.weekly.eflm_absent")
+
+
+_CTCAE_ABSENT_MARK = "ctcae_absent_noticed"
+
+
+def _note_ctcae_absent() -> None:
+    """Тот же класс для CTCAE (карточка report:5bf1da, 01.11): снимок в публичную версию не
+    входит (NOTICE.md), _seed_safety_lab_thresholds строк не сеет — пустота штатная, не fault."""
+    _note_snapshot_absent(_CTCAE_ABSENT_MARK, "owner.weekly.ctcae_absent")
+
+
+def _note_snapshot_absent(mark_name: str, text_key: str) -> None:
     """Установка без снимка EFLM — штатное состояние, а не сбой (нить eflm-install-fetch, 31.10).
 
     Снимок не едет в репозиторий, и установка не качает его сама: условия EFLM разрешают
@@ -285,14 +302,17 @@ def _note_eflm_absent() -> None:
     try:
         import i18n
         import notify
-        mark = notify.weekly_path().parent / _EFLM_ABSENT_MARK
+        mark = notify.weekly_path().parent / mark_name
         if mark.exists():
             return
-        notify.weekly(i18n.t("owner.weekly.eflm_absent"))
+        # Отметка — только по квитанции записи: отказ журнала не гасит сообщение навсегда,
+        # следующий процесс попробует снова (ревью ночного ремонта 01.11).
+        if not notify.weekly(i18n.t(text_key)):
+            return
         mark.parent.mkdir(parents=True, exist_ok=True)
         mark.write_text("1", encoding="utf-8")
     except Exception as e:  # noqa: BLE001 — подсказка best-effort; лог остаётся
-        log.warning(f"_note_eflm_absent: {type(e).__name__}: {e}")
+        log.warning(f"_note_snapshot_absent({mark_name}): {type(e).__name__}: {e}")
 
 
 def _load_lab_trend_thresholds() -> dict:
